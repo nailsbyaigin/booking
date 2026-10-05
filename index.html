@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nails by Aigin</title>
+<style>
+:root{--bg:#fff7f8;--fg:#2b2024;--card:#fff;--ac:#c2467a;--mut:#8a7a80;--bd:#f0dde3}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1518;--fg:#f6eaee;--card:#2a2024;--ac:#e0709f;--mut:#b7a3ab;--bd:#40303a}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:560px;margin:0 auto;padding:20px 16px 60px}
+h1{font-family:Georgia,serif;color:var(--ac);margin:8px 0}h2{font-size:1rem;margin:22px 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:10px 0}
+button,input,select,textarea{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--fg);max-width:100%}
+input,select,textarea{width:100%;margin:4px 0 10px}
+button{cursor:pointer}.pri{background:var(--ac);color:#fff;border:0;font-weight:600}
+.slot{margin:0 6px 6px 0}.slot.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.mut{color:var(--mut);font-size:.9rem}.row{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.msg{padding:10px;border-radius:10px;background:var(--card);border:1px solid var(--ac)}
+</style></head><body><main id="app">Loading…</main>
+<script>
+// ====== EDIT THESE ======
+const CFG={
+  owner:"YOUR_GITHUB_USERNAME", repo:"YOUR_REPO_NAME", salon:"Nails by Aigin",
+  services:["Gel","Acrylic","Manicure","Pedicure","Nail art"],
+  // Customer token (Issues only). Split in 2 so GitHub doesn't auto-revoke it. See README.
+  tokenParts:["PART_1","PART_2"]
+};
+// ========================
+const API=`https://api.github.com/repos/${CFG.owner}/${CFG.repo}`, app=document.getElementById('app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))), unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const u8=s=>btoa(unescape(encodeURIComponent(s)));
+const when=s=>new Date(s.replace(' ','T')).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+const day=s=>new Date(s.replace(' ','T')).toLocaleDateString([],{weekday:'long',day:'numeric',month:'long'});
+async function gh(path,opt={},tok){
+  const h={Accept:'application/vnd.github+json'};if(tok)h.Authorization='Bearer '+tok;
+  const r=await fetch(API+path,{...opt,headers:h,cache:'no-store'});
+  if(!r.ok)throw new Error('GitHub error '+r.status);return r.json();}
+async function getSlots(tok){
+  const f=await gh('/contents/slots.json?t='+Date.now(),{},tok);
+  return{sha:f.sha,...JSON.parse(new TextDecoder().decode(unb64(f.content.replace(/\n/g,''))))};}
+async function saveSlots(d,tok){
+  const body={message:'update slots',content:u8(JSON.stringify({pub:d.pub,slots:d.slots},null,1)),sha:d.sha};
+  const r=await gh('/contents/slots.json',{method:'PUT',body:JSON.stringify(body)},tok);d.sha=r.content.sha;}
+async function getBookings(tok){
+  const l=await gh('/issues?state=open&per_page=100&t='+Date.now(),{},tok);
+  return l.filter(i=>!i.pull_request&&i.title.startsWith('BOOK ')).map(i=>({n:i.number,slot:i.title.slice(5),body:i.body,at:i.created_at}));}
+// ---- crypto: AES-GCM data key wrapped with admin's RSA public key
+const RSA={name:'RSA-OAEP',hash:'SHA-256'};
+async function enc(pub,obj){
+  const rsa=await crypto.subtle.importKey('jwk',pub,RSA,false,['encrypt']);
+  const k=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),iv=crypto.getRandomValues(new Uint8Array(12));
+  const c=await crypto.subtle.encrypt({name:'AES-GCM',iv},k,new TextEncoder().encode(JSON.stringify(obj)));
+  const w=await crypto.subtle.encrypt('RSA-OAEP',rsa,await crypto.subtle.exportKey('raw',k));
+  return JSON.stringify({k:b64(w),i:b64(iv),c:b64(c)});}
+async function dec(priv,s){
+  const o=JSON.parse(s),rsa=await crypto.subtle.importKey('jwk',priv,RSA,false,['decrypt']);
+  const raw=await crypto.subtle.decrypt('RSA-OAEP',rsa,unb64(o.k));
+  const k=await crypto.subtle.importKey('raw',raw,'AES-GCM',false,['decrypt']);
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(o.i)},k,unb64(o.c))));}
+const now=()=>new Date().toISOString().slice(0,16).replace('T',' ');
+
+// ================= CUSTOMER =================
+async function customer(){
+  app.innerHTML=`<h1>${esc(CFG.salon)}</h1><p class="mut">Pick a time that suits you.</p><div id="s">Loading times…</div>`;
+  let d,taken;
+  try{d=await getSlots();taken=new Set((await getBookings()).map(b=>b.slot));}catch(e){return app.innerHTML+`<p class="msg">Could not load times. Please try again later.</p>`;}
+  const free=d.slots.filter(s=>s>now()&&!taken.has(s)).sort();
+  if(!free.length||!d.pub)return document.getElementById('s').innerHTML=`<p class="card">No free times right now. Please check back soon.</p>`;
+  const g={};free.forEach(s=>(g[day(s)]??=[]).push(s));
+  let sel=null;
+  document.getElementById('s').innerHTML=Object.entries(g).map(([k,v])=>`<div class="card"><b>${esc(k)}</b><div style="margin-top:8px">${v.map(s=>`<button class="slot" data-s="${s}">${s.slice(11)}</button>`).join('')}</div></div>`).join('')+`<div id="f"></div>`;
+  document.querySelectorAll('.slot').forEach(b=>b.onclick=()=>{
+    sel=b.dataset.s;document.querySelectorAll('.slot').forEach(x=>x.classList.toggle('on',x===b));
+    document.getElementById('f').innerHTML=`<div class="card"><b>${esc(when(sel))}</b>
+    <label>Name<input id="n" autocomplete="name"></label><label>Phone / WhatsApp<input id="p" type="tel" autocomplete="tel"></label>
+    <label>Service<select id="v">${CFG.services.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label>
+    <label>Notes (optional)<textarea id="t" rows="2"></textarea></label>
+    <button class="pri" id="go">Book this time</button><p id="m" class="mut"></p></div>`;
+    document.getElementById('go').onclick=async()=>{
+      const n=document.getElementById('n').value.trim(),p=document.getElementById('p').value.trim(),m=document.getElementById('m');
+      if(!n||!p)return m.textContent='Please enter your name and phone.';
+      m.textContent='Booking…';document.getElementById('go').disabled=true;
+      try{
+        if((await getBookings()).some(x=>x.slot===sel)){m.textContent='Sorry, that time was just taken.';return setTimeout(customer,1500);}
+        const body=await enc(d.pub,{name:n,phone:p,service:document.getElementById('v').value,notes:document.getElementById('t').value});
+        await gh('/issues',{method:'POST',body:JSON.stringify({title:'BOOK '+sel,body})},CFG.tokenParts.join(''));
+        app.innerHTML=`<h1>${esc(CFG.salon)}</h1><p class="msg">✅ Booked for <b>${esc(when(sel))}</b>. See you then, ${esc(n)}!</p>`;
+      }catch(e){m.textContent='Something went wrong. Please try again.';document.getElementById('go').disabled=false;}
+    };
+  });
+}
+
+// ================= ADMIN =================
+async function admin(){
+  const L=k=>localStorage.getItem(k),tok=L('tok');
+  if(!tok)return app.innerHTML=`<h1>Admin</h1><div class="card"><p>Paste your admin token:</p><input id="t" type="password"><button class="pri" id="ok">Continue</button></div>`,
+    document.getElementById('ok').onclick=()=>{localStorage.setItem('tok',document.getElementById('t').value.trim());admin();};
+  app.innerHTML='<h1>Admin</h1>Loading…';
+  let d;try{d=await getSlots(tok);}catch(e){localStorage.removeItem('tok');return app.innerHTML='<p class="msg">Token rejected. Reload and try again.</p>';}
+  if(!d.pub){
+    const k=await crypto.subtle.generateKey({...RSA,modulusLength:2048,publicExponent:new Uint8Array([1,0,1])},true,['encrypt','decrypt']);
+    d.pub=await crypto.subtle.exportKey('jwk',k.publicKey);
+    localStorage.setItem('priv',JSON.stringify(await crypto.subtle.exportKey('jwk',k.privateKey)));
+    await saveSlots(d,tok);
+  }
+  if(!L('priv'))return app.innerHTML=`<h1>Admin</h1><div class="card"><p>Paste your private key backup:</p><textarea id="k" rows="5"></textarea><button class="pri" id="ok">Save</button></div>`,
+    document.getElementById('ok').onclick=()=>{localStorage.setItem('priv',document.getElementById('k').value.trim());admin();};
+  const priv=JSON.parse(L('priv'));let bk=[];
+  try{bk=await getBookings(tok);}catch(e){}
+  const rows=[];for(const b of bk.sort((a,b)=>a.slot.localeCompare(b.slot))){
+    let x;try{x=await dec(priv,b.body);}catch(e){x={name:'(cannot decrypt)',phone:'',service:''};}
+    rows.push(`<div class="card"><div class="row"><b>${esc(when(b.slot))}</b><button data-c="${b.n}">Cancel</button></div>
+    ${esc(x.name)} · <a href="tel:${esc(x.phone)}">${esc(x.phone)}</a><br><span class="mut">${esc(x.service)}${x.notes?' — '+esc(x.notes):''}</span></div>`);}
+  const taken=new Set(bk.map(b=>b.slot)),slots=d.slots.filter(s=>s>now()).sort();
+  app.innerHTML=`<h1>Admin</h1><h2>Bookings (${rows.length})</h2>${rows.join('')||'<p class="mut">None yet.</p>'}
+  <h2>Add free times</h2><div class="card"><input id="d" type="date"><input id="h" placeholder="Times, e.g. 10:00, 11:30, 14:00">
+  <button class="pri" id="add">Add</button></div>
+  <h2>Open slots</h2><div class="card">${slots.map(s=>`<button class="slot" data-r="${s}" title="Remove">${esc(when(s))}${taken.has(s)?' ✔ booked':' ✕'}</button>`).join('')||'<span class="mut">None</span>'}</div>
+  <h2>Backup</h2><details class="card"><summary>Show private key (keep it safe)</summary><textarea rows="4" readonly>${esc(L('priv'))}</textarea></details>`;
+  const busy=async f=>{try{await f();admin();}catch(e){alert('Failed: '+e.message);}};
+  document.getElementById('add').onclick=()=>busy(async()=>{
+    const dt=document.getElementById('d').value,ts=document.getElementById('h').value.split(',').map(s=>s.trim()).filter(Boolean);
+    ts.forEach(t=>{const s=dt+' '+t.padStart(5,'0');if(/^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(s)&&!d.slots.includes(s))d.slots.push(s);});await saveSlots(d,tok);});
+  document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>confirm('Remove this slot?')&&busy(async()=>{d.slots=d.slots.filter(s=>s!==b.dataset.r);await saveSlots(d,tok);}));
+  document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>confirm('Cancel this booking?')&&busy(()=>gh('/issues/'+b.dataset.c,{method:'PATCH',body:JSON.stringify({state:'closed'})},tok)));
+}
+location.hash==='#admin'?admin():customer();
+window.onhashchange=()=>location.reload();
+</script></body></html>
