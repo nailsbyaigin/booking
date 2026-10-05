@@ -19,10 +19,10 @@ button{cursor:pointer}.pri{background:var(--ac);color:#fff;border:0;font-weight:
 <script>
 // ====== EDIT THESE ======
 const CFG={
-  owner:"YOUR_GITHUB_USERNAME", repo:"YOUR_REPO_NAME", salon:"Nails by Aigin",
+  owner:"nailsbyaigin", repo:"booking", salon:"Nails by Aigin",
   services:["Gel","Acrylic","Manicure","Pedicure","Nail art"],
   // Customer token (Issues only). Split in 2 so GitHub doesn't auto-revoke it. See README.
-  tokenParts:["github_pat_11CQU2WRA0C22wP3BDq3w7_UMhs","LByr5Ic3e2NbQMiuzewf7YtHCpwlU4rj88nOmgGC6EWQBSRFyYrLduG"]
+  tokenParts:["PART_1","PART_2"]
 };
 // ========================
 const API=`https://api.github.com/repos/${CFG.owner}/${CFG.repo}`, app=document.getElementById('app');
@@ -63,7 +63,7 @@ const now=()=>new Date().toISOString().slice(0,16).replace('T',' ');
 async function customer(){
   app.innerHTML=`<h1>${esc(CFG.salon)}</h1><p class="mut">Pick a time that suits you.</p><div id="s">Loading times…</div>`;
   let d,taken;
-  try{d=await getSlots();taken=new Set((await getBookings()).map(b=>b.slot));}catch(e){return app.innerHTML+`<p class="msg">Could not load times. Please try again later.</p>`;}
+  try{d=await getSlots();taken=new Set((await getBookings()).map(b=>b.slot));}catch(e){return document.getElementById('s').innerHTML=`<p class="msg">Could not load times (${esc(e.message)}). Please try again later.</p>`;}
   const free=d.slots.filter(s=>s>now()&&!taken.has(s)).sort();
   if(!free.length||!d.pub)return document.getElementById('s').innerHTML=`<p class="card">No free times right now. Please check back soon.</p>`;
   const g={};free.forEach(s=>(g[day(s)]??=[]).push(s));
