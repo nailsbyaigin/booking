@@ -22,7 +22,7 @@ const CFG={
   owner:"nailsbyaigin", repo:"booking", salon:"Nails by Aigin",
   services:["Gel","Acrylic","Manicure","Pedicure","Nail art"],
   // Customer token (Issues only). Split in 2 so GitHub doesn't auto-revoke it. See README.
-  tokenParts:["github_pat_11CQU2WRA0C22wP3BDq3w7_UMhsL","Byr5Ic3e2NbQMiuzewf7YtHCpwlU4rj88nOmgGC6EWQBSRFyYrLduG"]
+  tokenParts:["PART_1","PART_2"]
 };
 // ========================
 const API=`https://api.github.com/repos/${CFG.owner}/${CFG.repo}`, app=document.getElementById('app');
@@ -34,7 +34,7 @@ const day=s=>new Date(s.replace(' ','T')).toLocaleDateString([],{weekday:'long',
 async function gh(path,opt={},tok){
   const h={Accept:'application/vnd.github+json'};if(tok)h.Authorization='Bearer '+tok;
   const r=await fetch(API+path,{...opt,headers:h,cache:'no-store'});
-  if(!r.ok)throw new Error('GitHub error '+r.status);return r.json();}
+  if(!r.ok){let m='';try{m=(await r.json()).message}catch(e){}throw new Error(r.status+' '+m);}return r.json();}
 async function getSlots(tok){
   const f=await gh('/contents/slots.json?t='+Date.now(),{},tok);
   return{sha:f.sha,...JSON.parse(new TextDecoder().decode(unb64(f.content.replace(/\n/g,''))))};}
@@ -97,11 +97,16 @@ async function admin(){
     document.getElementById('ok').onclick=()=>{localStorage.setItem('tok',document.getElementById('t').value.trim());admin();};
   app.innerHTML='<h1>Admin</h1>Loading…';
   let d;try{d=await getSlots(tok);}catch(e){localStorage.removeItem('tok');return app.innerHTML='<p class="msg">Token rejected. Reload and try again.</p>';}
-  if(!d.pub){
+  if(!d.pub)try{
     const k=await crypto.subtle.generateKey({...RSA,modulusLength:2048,publicExponent:new Uint8Array([1,0,1])},true,['encrypt','decrypt']);
     d.pub=await crypto.subtle.exportKey('jwk',k.publicKey);
     localStorage.setItem('priv',JSON.stringify(await crypto.subtle.exportKey('jwk',k.privateKey)));
     await saveSlots(d,tok);
+  }catch(e){
+    localStorage.removeItem('priv');
+    app.innerHTML=`<h1>Admin</h1><p class="msg">Setup failed: ${esc(e.message)}<br>Check that the admin token has <b>Contents: Read and write</b> and <b>Issues: Read and write</b> on the booking repo.</p><button id="rt">Use a different token</button>`;
+    document.getElementById('rt').onclick=()=>{localStorage.removeItem('tok');admin();};
+    return;
   }
   if(!L('priv'))return app.innerHTML=`<h1>Admin</h1><div class="card"><p>Paste your private key backup:</p><textarea id="k" rows="5"></textarea><button class="pri" id="ok">Save</button></div>`,
     document.getElementById('ok').onclick=()=>{localStorage.setItem('priv',document.getElementById('k').value.trim());admin();};
@@ -124,6 +129,6 @@ async function admin(){
   document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>confirm('Remove this slot?')&&busy(async()=>{d.slots=d.slots.filter(s=>s!==b.dataset.r);await saveSlots(d,tok);}));
   document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>confirm('Cancel this booking?')&&busy(()=>gh('/issues/'+b.dataset.c,{method:'PATCH',body:JSON.stringify({state:'closed'})},tok)));
 }
-location.hash==='#admin'?admin():customer();
+(location.hash==='#admin'?admin():customer()).catch(e=>{app.innerHTML='<p class="msg">Error: '+esc(e.message)+'</p>';});
 window.onhashchange=()=>location.reload();
 </script></body></html>
