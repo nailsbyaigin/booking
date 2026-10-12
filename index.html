@@ -9,6 +9,7 @@
 main{max-width:560px;margin:0 auto;padding:20px 16px 60px}
 h1{font-family:Georgia,serif;color:var(--ac);margin:8px 0}h2{font-size:1rem;margin:22px 0 8px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:10px 0}
+button:disabled{opacity:.3;cursor:default}
 button,input,select,textarea{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--fg);max-width:100%}
 input,select,textarea{width:100%;margin:4px 0 10px}
 button{cursor:pointer}.pri{background:var(--ac);color:#fff;border:0;font-weight:600}
@@ -22,7 +23,7 @@ const CFG={
   owner:"nailsbyaigin", repo:"booking", salon:"Nails by Aigin",
   services:["Gel","Acrylic","Manicure","Pedicure","Nail art"],
   // Customer token (Issues only). Split in 2 so GitHub doesn't auto-revoke it. See README.
-  tokenParts:["github_pat_11CQU2WRA0C22wP3BDq3w7_UMhsLBy","r5Ic3e2NbQMiuzewf7YtHCpwlU4rj88nOmgGC6EWQBSRFyYrLduG"]
+  tokenParts:["PART_1","PART_2"]
 };
 // ========================
 const API=`https://api.github.com/repos/${CFG.owner}/${CFG.repo}`, app=document.getElementById('app');
@@ -118,14 +119,34 @@ async function admin(){
     ${esc(x.name)} · <a href="tel:${esc(x.phone)}">${esc(x.phone)}</a><br><span class="mut">${esc(x.service)}${x.notes?' — '+esc(x.notes):''}</span></div>`);}
   const taken=new Set(bk.map(b=>b.slot)),slots=d.slots.filter(s=>s>now()).sort();
   app.innerHTML=`<h1>Admin</h1><h2>Bookings (${rows.length})</h2>${rows.join('')||'<p class="mut">None yet.</p>'}
-  <h2>Add free times</h2><div class="card"><input id="d" type="date"><input id="h" placeholder="Times, e.g. 10:00, 11:30, 14:00">
-  <button class="pri" id="add">Add</button></div>
+  <h2>Add free times</h2><div class="card"><b>1. Tap the days</b><div id="cal"></div><b>2. Tap the times</b><div id="tm" style="margin:8px 0"></div>
+  <div class="row" style="justify-content:flex-start"><input id="ct" type="time" style="width:auto;margin:0"><button id="cta">+ Other time</button></div>
+  <p id="am" class="mut"></p><button class="pri" id="add">Add to calendar</button></div>
   <h2>Open slots</h2><div class="card">${slots.map(s=>`<button class="slot" data-r="${s}" title="Remove">${esc(when(s))}${taken.has(s)?' ✔ booked':' ✕'}</button>`).join('')||'<span class="mut">None</span>'}</div>
   <h2>Backup</h2><details class="card"><summary>Show private key (keep it safe)</summary><textarea rows="4" readonly>${esc(L('priv'))}</textarea></details>`;
   const busy=async f=>{try{await f();admin();}catch(e){alert('Failed: '+e.message);}};
-  document.getElementById('add').onclick=()=>busy(async()=>{
-    const dt=document.getElementById('d').value,ts=document.getElementById('h').value.split(',').map(s=>s.trim()).filter(Boolean);
-    ts.forEach(t=>{const s=dt+' '+t.padStart(5,'0');if(/^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(s)&&!d.slots.includes(s))d.slots.push(s);});await saveSlots(d,tok);});
+  const $=id=>document.getElementById(id),p2=n=>String(n).padStart(2,'0'),dk=(y,m,x)=>y+'-'+p2(m+1)+'-'+p2(x);
+  const T=new Date(),td=dk(T.getFullYear(),T.getMonth(),T.getDate()),cm=new Date(T.getFullYear(),T.getMonth(),1),sd=new Set(),st=new Set();
+  let times=[];for(let h=8;h<=20;h++){times.push(p2(h)+':00');if(h<20)times.push(p2(h)+':30');}
+  const info=()=>{$('am').textContent=sd.size&&st.size?`Will add ${sd.size*st.size} slot(s)`:'';};
+  const drawCal=()=>{
+    const y=cm.getFullYear(),m=cm.getMonth(),f=(new Date(y,m,1).getDay()+6)%7,n=new Date(y,m+1,0).getDate();
+    let h=`<div class="row"><button id="pm">‹</button><b>${cm.toLocaleDateString([],{month:'long',year:'numeric'})}</b><button id="nm">›</button></div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:8px 0;text-align:center">`+['M','T','W','T','F','S','S'].map(x=>`<span class="mut">${x}</span>`).join('')+'<span></span>'.repeat(f);
+    for(let i=1;i<=n;i++){const k=dk(y,m,i);h+=`<button class="slot${sd.has(k)?' on':''}" style="margin:0;padding:8px 0" data-k="${k}" ${k<td?'disabled':''}>${i}</button>`;}
+    $('cal').innerHTML=h+'</div>';
+    $('pm').onclick=()=>{cm.setMonth(m-1);drawCal();};$('nm').onclick=()=>{cm.setMonth(m+1);drawCal();};
+    $('cal').querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{sd.has(b.dataset.k)?sd.delete(b.dataset.k):sd.add(b.dataset.k);drawCal();info();});
+  };
+  const drawTm=()=>{
+    $('tm').innerHTML=times.map(t=>`<button class="slot${st.has(t)?' on':''}" data-t="${t}">${t}</button>`).join('');
+    $('tm').querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{st.has(b.dataset.t)?st.delete(b.dataset.t):st.add(b.dataset.t);drawTm();info();});
+  };
+  $('cta').onclick=()=>{const v=$('ct').value;if(v){if(!times.includes(v))times.push(v);times.sort();st.add(v);drawTm();info();}};
+  drawCal();drawTm();
+  $('add').onclick=()=>{
+    if(!sd.size||!st.size)return $('am').textContent='Pick at least one day and one time.';
+    busy(async()=>{sd.forEach(x=>st.forEach(t=>{const k=x+' '+t;if(!d.slots.includes(k))d.slots.push(k);}));await saveSlots(d,tok);});
+  };
   document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>confirm('Remove this slot?')&&busy(async()=>{d.slots=d.slots.filter(s=>s!==b.dataset.r);await saveSlots(d,tok);}));
   document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>confirm('Cancel this booking?')&&busy(()=>gh('/issues/'+b.dataset.c,{method:'PATCH',body:JSON.stringify({state:'closed'})},tok)));
 }
