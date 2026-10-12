@@ -22,7 +22,7 @@ For both: *Repository access* → **Only select repositories** → your booking 
 GitHub automatically revokes tokens it finds in public repos, so split it in two.
 Edit the top of `index.html`:
 
-```js
+```js 
 owner: "your-github-username",
 repo: "booking",
 salon: "Nails by Aigin",
